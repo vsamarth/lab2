@@ -11,13 +11,7 @@ struct PCBTable {
     int exitCode; // -1 not exit, else exit code status
 };
 
-struct PCBContainer {
-    struct PCBTable table[MAX_PROCESSES];
-    size_t size;
-};
 
-void pcb_init(struct PCBContainer *pcb);
-void pcb_add(struct PCBContainer *pcb, pid_t pid);
 
 void my_init(void);
 void my_process_command(size_t num_tokens, char **tokens);

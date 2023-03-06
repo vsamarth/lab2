@@ -3,6 +3,8 @@
  *
  * This file contains function definitions. Your implementation should go in
  * this file.
+ *
+ * Author - Samarth Verma
  */
 
 #include "myshell.h"
@@ -20,6 +22,17 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+struct PCBContainer {
+  struct PCBTable table[MAX_PROCESSES];
+  size_t size;
+};
+
+bool is_waiting = false;
+pid_t waiting_pid;
+
+void pcb_init(struct PCBContainer *pcb);
+void pcb_add(struct PCBContainer *pcb, pid_t pid);
+
 struct PCBContainer pcb_container;
 
 char **pid_status = (char *[]){"Exited", "Running", "Terminating", "Stopped"};
@@ -30,15 +43,6 @@ void pcb_add(struct PCBContainer *pcb, pid_t pid) {
   pcb->table[size].status = 2;
   pcb->table[size].exitCode = -1;
   pcb->size++;
-}
-
-bool pcb_exists(struct PCBContainer *pcb, pid_t pid) {
-  for (size_t i = 0; i < pcb->size; i++) {
-    if (pcb->table[i].pid == pid) {
-      return true;
-    }
-  }
-  return false;
 }
 
 void pcb_update_status(struct PCBContainer *pcb, pid_t pid, int status,
@@ -57,25 +61,17 @@ void pcb_update_status(struct PCBContainer *pcb, pid_t pid, int status,
  ******************************************************************************/
 
 static void signal_handler(int signo) {
-
-  // Use the signo to identy ctrl-Z or ctrl-C and print “[PID] stopped or print
-  // “[PID] interrupted accordingly. Update the status of the process in the PCB
-  // table
+  // signal(signo, signal_handler);
+  // printf("Signal received: %d\n", signo);
 }
-
-/*******************************************************************************
- * Built-in Commands
- ******************************************************************************/
 
 static void command_info(int option) {
   switch (option) {
   case 0:
     for (size_t i = 0; i < pcb_container.size; i++) {
-
       int status = pcb_container.table[i].status;
       pid_t pid = pcb_container.table[i].pid;
       int exitCode = pcb_container.table[i].exitCode;
-
       if (status == 1) {
         printf("[%d] %s %d\n", pid, pid_status[status - 1], exitCode);
       } else {
@@ -121,7 +117,7 @@ static void command_wait(pid_t pid) {
     if (pcb_container.table[i].pid == pid &&
         pcb_container.table[i].status == 2) {
       int status;
-      pid_t p = waitpid(pid, &status, 0);
+      waitpid(pid, &status, 0);
 
       if (WIFEXITED(status)) {
         pcb_update_status(&pcb_container, pid, 1, WEXITSTATUS(status));
@@ -156,7 +152,6 @@ static void command_fg(/* pass necessary parameters*/) {
  ******************************************************************************/
 
 static void command_exec(char *program, char **args, int argc) {
-  // printf("executing %s with %d arguments\n", program, argc);
   int ret = access(program, R_OK | X_OK);
   if (ret == -1) {
     fprintf(stderr, "%s not found\n", program);
@@ -218,9 +213,13 @@ static void command_exec(char *program, char **args, int argc) {
       close(fd);
     }
 
+    // ignore SIGINT and SIGTSTP
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+
     int err = execv(program, args);
     if (err) {
-        // TODO: print error message
+      // TODO: print error message
     }
 
   } else {
@@ -229,14 +228,20 @@ static void command_exec(char *program, char **args, int argc) {
     if (background) {
       printf("Child [%d] in background\n", pid);
     } else {
+      is_waiting = true;
+      waiting_pid = pid;
       int status;
-      waitpid(pid, &status, 0);
-      // Update the status and exit code of the process in the PCBTable
+      waitpid(pid, &status, WUNTRACED);
       if (WIFEXITED(status)) {
         pcb_update_status(&pcb_container, pid, 1, WEXITSTATUS(status));
       } else if (WIFSIGNALED(status)) {
         pcb_update_status(&pcb_container, pid, 1, WTERMSIG(status));
+      } else if (WIFSTOPPED(status)) {
+        pcb_update_status(&pcb_container, pid, 4, WSTOPSIG(status));
       }
+
+      is_waiting = false;
+      waiting_pid = -1;
     }
   }
 }
@@ -290,10 +295,12 @@ static void command(char *command, char **args, int argc) {
 void pcb_init(struct PCBContainer *container) { container->size = 0; }
 
 void my_init(void) {
-  // use signal() with SIGTSTP to setup a signalhandler for ctrl+z : ex4
-  // use signal() with SIGINT to setup a signalhandler for ctrl+c  : ex4
 
   pcb_init(&pcb_container);
+  
+  signal(SIGINT, SIG_IGN);
+  signal(SIGTSTP, SIG_IGN);
+
 }
 
 void collect_zombie() {
